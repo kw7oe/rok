@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 mod packet;
 
-type State = Arc<RwLock<HashMap<String, ControlChannel>>>;
+type State = Arc<RwLock<HashMap<String, TcpStream>>>;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -32,58 +32,7 @@ async fn handle_connection(mut conn: TcpStream, state: State) -> std::io::Result
     let bytes_len = conn.read_buf(&mut buffer).await?;
     let packet = packet::Packet::parse(&buffer);
     match packet {
-        packet::Packet::Init => {
-            let domain = "test.rok.me".to_string();
-            let success = packet::Packet::Success(domain.clone());
-            conn.write_all(&bincode::serialize(&success).unwrap())
-                .await?;
-            println!("sent success msg");
-
-            buffer.advance(bytes_len);
-            let len = conn.read_buf(&mut buffer).await;
-            if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
-                println!("receive ack from client");
-
-                let mut state = state.write().await;
-
-                // Ask client to create a data channel.
-                // let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
-                // conn.write_all(create_data).await?;
-                // println!("sent create data msg");
-                let cc = ControlChannel::new(conn);
-                state.insert(domain, cc);
-            }
-        }
-        packet::Packet::DataInit(domain) => {
-            let mut state = state.write().await;
-
-            if let Some(cc) = state.get_mut(&domain) {
-                cc.send(conn);
-            } else {
-                println!("no control channel found for {domain}");
-            }
-        }
-        _ => {
-            println!("unexpected packet: {packet:?}");
-        }
-    }
-    buffer.advance(bytes_len);
-
-    Ok(())
-}
-
-#[derive(Debug)]
-struct ControlChannel {
-    conn: TcpStream,
-}
-
-impl ControlChannel {
-    fn new(conn: TcpStream) -> Self {
-        Self { conn }
-    }
-
-    fn send(&mut self, mut conn: TcpStream) {
-        tokio::spawn(async move {
+        packet::Packet::DataInit(_domain) => {
             let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
             println!("Listening to 127.0.0.1:3000");
 
@@ -98,6 +47,12 @@ impl ControlChannel {
                     let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
                 }
             }
-        });
+        }
+        _ => {
+            println!("unexpected packet: {packet:?}");
+        }
     }
+    buffer.advance(bytes_len);
+
+    Ok(())
 }

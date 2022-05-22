@@ -1,36 +1,10 @@
-use bytes::Buf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 mod packet;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut cc = TcpStream::connect("rok.me:3001").await?;
-    let mut buf = bytes::BytesMut::with_capacity(1024);
-
-    // Send a Init
-    let init = packet::Packet::Init;
-    cc.write_all(&bincode::serialize(&init).unwrap()).await?;
-    let len = cc.read_buf(&mut buf).await?;
-    let domain = if let packet::Packet::Success(domain) = packet::Packet::parse(&buf) {
-        println!("tunnel up!\nHost: {domain}");
-        Some(domain)
-    } else {
-        None
-    };
-    buf.advance(len);
-
-    if domain.is_none() {
-        return Err("fail to init with server".into());
-    }
-
-    // Let tunnel know client is ready
-    cc.write_all(&bincode::serialize(&packet::Packet::Ack).unwrap())
-        .await?;
-
-    println!("control channel established!");
-
-    let domain = domain.unwrap();
+    let domain = "test.rok.me".to_string();
     if let Err(e) = run_data_channel(domain).await {
         println!("{:?}", e);
     }
@@ -41,6 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn run_data_channel(domain: String) -> std::io::Result<()> {
     loop {
         let mut conn = TcpStream::connect("rok.me:3001").await?;
+        println!("established data channel...");
         conn.write_all(&bincode::serialize(&packet::Packet::DataInit(domain.clone())).unwrap())
             .await?;
 
