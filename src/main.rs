@@ -47,9 +47,9 @@ async fn handle_connection(mut conn: TcpStream, state: State) -> std::io::Result
                 let mut state = state.write().await;
 
                 // Ask client to create a data channel.
-                let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
-                conn.write_all(create_data).await?;
-                println!("sent create data msg");
+                // let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
+                // conn.write_all(create_data).await?;
+                // println!("sent create data msg");
                 let cc = ControlChannel::new(conn);
                 state.insert(domain, cc);
             }
@@ -94,7 +94,7 @@ impl ControlChannel {
                     .await
                     .is_ok()
                 {
-                    println!("forward to {conn:?}");
+                    println!("copy bidirectional data: incoming, conn");
                     let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
                 }
             }
