@@ -95,10 +95,7 @@ impl ControlChannel {
                     .is_ok()
                 {
                     println!("forward to {conn:?}");
-                    let result = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
-                    if let Ok((a, b)) = result {
-                        println!("{a}, {b}");
-                    }
+                    let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
                 }
             }
         });
