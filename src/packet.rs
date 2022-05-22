@@ -1,16 +1,17 @@
-#[derive(Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Packet {
-    Init(String),
-    Success,
+    Ack,
+    Init,
+    Success(String),
+    CreateData,
+    DataInit(String),
+    DataForward,
 }
 
 impl Packet {
     pub fn parse(bytes: &[u8]) -> Self {
-        println!("{:?}", bytes);
-        if bytes == b"0" {
-            Packet::Init("test.rok.me".to_string())
-        } else {
-            Packet::Success
-        }
+        bincode::deserialize(bytes).unwrap()
     }
 }

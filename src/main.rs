@@ -1,89 +1,106 @@
 use bytes::{Buf, BytesMut};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock;
 
 mod packet;
+
+type State = Arc<RwLock<HashMap<String, ControlChannel>>>;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
-    let mut map: HashMap<String, TcpStream> = HashMap::new();
-
     let listener = TcpListener::bind("127.0.0.1:3001").await?;
+    let state: State = Arc::new(RwLock::new(HashMap::new()));
     println!("Listening on TCP: 127.0.0.1:3001");
-
     loop {
-        let (mut socket, _) = listener.accept().await?;
-        println!("Accpeting new client...");
-        let result = process_socket(&mut map, &mut socket).await?;
-        if let Some(host) = result {
-            map.insert(host, socket);
+        if let Ok((conn, _)) = listener.accept().await {
+            println!("Accpeting new client...");
+            let state = state.clone();
+            tokio::spawn(async move {
+                let _ = handle_connection(conn, state).await;
+            });
         }
     }
 }
 
-async fn process_socket(
-    map: &mut HashMap<String, TcpStream>,
-    socket: &mut TcpStream,
-) -> std::io::Result<Option<String>> {
+async fn handle_connection(mut conn: TcpStream, state: State) -> std::io::Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
-    let mut result = None;
 
-    loop {
-        let bytes_len = socket.read_buf(&mut buffer).await?;
-        if bytes_len != 0 {
-            let mut headers = [httparse::EMPTY_HEADER; 64];
-            let mut req = httparse::Request::new(&mut headers);
-            req.parse(&buffer).unwrap();
+    let bytes_len = conn.read_buf(&mut buffer).await?;
+    let packet = packet::Packet::parse(&buffer);
+    match packet {
+        packet::Packet::Init => {
+            let domain = "test.rok.me".to_string();
+            let success = packet::Packet::Success(domain.clone());
+            conn.write_all(&bincode::serialize(&success).unwrap())
+                .await?;
+            println!("sent success msg");
 
-            let host_header = req.headers.iter().find(|h| h.name == "Host");
+            buffer.advance(bytes_len);
+            let len = conn.read_buf(&mut buffer).await;
+            if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
+                println!("receive ack from client");
 
-            if let Some(host) = host_header {
-                let mut host = String::from_utf8_lossy(host.value).into_owned();
+                let mut state = state.write().await;
 
-                if host.contains(':') {
-                    let (domain, _port) = host.split_once(':').unwrap();
-                    host = domain.to_string();
-                }
-
-                println!("Host: {host}");
-                println!("map: {map:?}");
-                // TODO: Tunnel to another socket.
-                if let Some(tunnel_socket) = map.get_mut(&host) {
-                    println!("writing message!");
-                    tunnel_socket.write_all(&buffer).await?;
-                    let mut response_buffer = BytesMut::with_capacity(4096);
-
-                    let mut len = tunnel_socket.read_buf(&mut response_buffer).await?;
-                    while len != 0 {
-                        socket.write_all(&response_buffer).await?;
-                        response_buffer.advance(len);
-                        len = tunnel_socket.read_buf(&mut response_buffer).await?;
-                    }
-
-                    println!("receive and forward response!");
-                } else {
-                    socket
-                        .write_all(b"HTTP/1.1 500 Internal Server Error\nContent-Length: 0\nConnection: Closed\n\n")
-                        .await?;
-                }
-            } else {
-                let packet = packet::Packet::parse(&buffer);
-                println!("socket {socket:?}, receive: {packet:?}");
-
-                if let packet::Packet::Init(resp) = packet {
-                    socket.write_all(resp.as_bytes()).await?;
-                    result = Some(resp);
-                    break;
-                }
-
-                buffer.advance(bytes_len);
+                // Ask client to create a data channel.
+                let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
+                conn.write_all(create_data).await?;
+                println!("sent create data msg");
+                let cc = ControlChannel::new(conn);
+                state.insert(domain, cc);
             }
-        } else {
-            break;
+        }
+        packet::Packet::DataInit(domain) => {
+            let mut state = state.write().await;
+
+            if let Some(cc) = state.get_mut(&domain) {
+                cc.send(conn);
+            } else {
+                println!("no control channel found for {domain}");
+            }
+        }
+        _ => {
+            println!("unexpected packet: {packet:?}");
         }
     }
+    buffer.advance(bytes_len);
 
-    Ok(result)
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ControlChannel {
+    conn: TcpStream,
+}
+
+impl ControlChannel {
+    fn new(conn: TcpStream) -> Self {
+        Self { conn }
+    }
+
+    fn send(&mut self, mut conn: TcpStream) {
+        tokio::spawn(async move {
+            let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+            println!("Listening to 127.0.0.1:3000");
+
+            if let Ok((mut incoming, addr)) = listener.accept().await {
+                println!("Accept incoming from {addr:?}");
+                if conn
+                    .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+                    .await
+                    .is_ok()
+                {
+                    println!("forward to {conn:?}");
+                    let result = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                    if let Ok((a, b)) = result {
+                        println!("{a}, {b}");
+                    }
+                }
+            }
+        });
+    }
 }
