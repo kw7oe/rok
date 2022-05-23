@@ -16,7 +16,7 @@ serde = { version = "1.0.137", features = ["derive"] }
 
 [[bin]]
 name = "server"
-path = "src/main.rs"
+path = "src/server.rs"
 
 [[bin]]
 name = "client"
