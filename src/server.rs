@@ -45,9 +45,9 @@ async fn handle_connection(
     let packet = packet::Packet::parse(&buffer);
     match packet {
         packet::Packet::Init => {
-            let mut domains = domains.lock().await;
-
-            let domain_port = domains.pop();
+            let mut domains_guard = domains.lock().await;
+            let domain_port = domains_guard.pop();
+            drop(domains_guard);
 
             if domain_port.is_none() {
                 println!("oops no more domain available, ignore you");
@@ -66,7 +66,7 @@ async fn handle_connection(
             if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
                 println!("receive ack from client");
                 let mut state = state.write().await;
-                let cc = ControlChannel::new(conn, domain_port);
+                let cc = ControlChannel::new(conn, domain_port, Arc::clone(&domains));
                 state.insert(domain, cc);
             }
         }
@@ -109,13 +109,22 @@ struct ControlChannel {
 }
 
 impl ControlChannel {
-    pub fn new(mut conn: TcpStream, domain_port: DomainPort) -> Self {
+    pub fn new(
+        mut conn: TcpStream,
+        domain_port: DomainPort,
+        domains: Arc<Mutex<Vec<DomainPort>>>,
+    ) -> Self {
+        // Clone so we could move into tokio async
+        let domains = Arc::clone(&domains);
+        let dp = domain_port.clone();
         tokio::spawn(async move {
             loop {
                 let res = conn.read_exact(&mut [0u8; 1]).await;
 
                 if let Err(err) = res {
                     println!("receive error: {}", err);
+                    let mut domains_guard = domains.lock().await;
+                    domains_guard.push(dp);
                     break;
                 }
             }
