@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 
 mod packet;
 
-type State = Arc<RwLock<HashMap<String, TcpStream>>>;
+type State = Arc<RwLock<HashMap<String, ControlChannel>>>;
 type DomainPort = (String, u16);
 
 #[tokio::main]
@@ -55,14 +55,14 @@ async fn handle_connection(
             }
 
             let domain_port = domain_port.unwrap();
-            let domain = domain_port.0;
+            let domain = domain_port.0.clone();
             let success = packet::Packet::Success(domain.clone());
             conn.write_all(&bincode::serialize(&success).unwrap())
                 .await?;
             println!("sent success msg");
 
             buffer.advance(bytes_len);
-            let len = conn.read_buf(&mut buffer).await;
+            conn.read_buf(&mut buffer).await?;
             if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
                 println!("receive ack from client");
 
@@ -72,22 +72,29 @@ async fn handle_connection(
                 // let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
                 // conn.write_all(create_data).await?;
                 // println!("sent create data msg");
-                state.insert(domain, conn);
+                let cc = ControlChannel::new(conn, domain_port);
+                state.insert(domain, cc);
             }
         }
-        packet::Packet::DataInit(_domain) => {
-            let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
-            println!("Listening to 127.0.0.1:3000");
+        packet::Packet::DataInit(domain) => {
+            let state = state.write().await;
 
-            if let Ok((mut incoming, addr)) = listener.accept().await {
-                println!("Accept incoming from {addr:?}");
-                if conn
-                    .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+            if let Some(cc) = state.get(&domain) {
+                let listener = TcpListener::bind(format!("127.0.0.1:{}", cc.domain_port.1))
                     .await
-                    .is_ok()
-                {
-                    println!("copy bidirectional data: incoming, conn");
-                    let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                    .unwrap();
+                println!("Listening to 127.0.0.1:{}", cc.domain_port.1);
+
+                if let Ok((mut incoming, addr)) = listener.accept().await {
+                    println!("Accept incoming from {addr:?}");
+                    if conn
+                        .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+                        .await
+                        .is_ok()
+                    {
+                        println!("copy bidirectional data: incoming, conn");
+                        let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                    }
                 }
             }
         }
@@ -98,4 +105,15 @@ async fn handle_connection(
     buffer.advance(bytes_len);
 
     Ok(())
+}
+
+struct ControlChannel {
+    conn: TcpStream,
+    domain_port: DomainPort,
+}
+
+impl ControlChannel {
+    pub fn new(conn: TcpStream, domain_port: DomainPort) -> Self {
+        ControlChannel { conn, domain_port }
+    }
 }
