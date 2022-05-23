@@ -2,6 +2,9 @@
 
 A minimal `ngrok` implementation in Rust.
 
+_This is by no mean an idiomatic or correct Rust implementation. I am learning
+Rust and fairly new to writing networking code with `tokio`_.
+
 ### Implementation and limitations
 
 Currently, it's a half baked implementation. It basically:
