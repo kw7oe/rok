@@ -65,13 +65,7 @@ async fn handle_connection(
             conn.read_buf(&mut buffer).await?;
             if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
                 println!("receive ack from client");
-
                 let mut state = state.write().await;
-
-                // Ask client to create a data channel.
-                // let create_data = &bincode::serialize(&packet::Packet::CreateData).unwrap();
-                // conn.write_all(create_data).await?;
-                // println!("sent create data msg");
                 let cc = ControlChannel::new(conn, domain_port);
                 state.insert(domain, cc);
             }
@@ -80,22 +74,25 @@ async fn handle_connection(
             let state = state.write().await;
 
             if let Some(cc) = state.get(&domain) {
-                let listener = TcpListener::bind(format!("127.0.0.1:{}", cc.domain_port.1))
-                    .await
-                    .unwrap();
-                println!("Listening to 127.0.0.1:{}", cc.domain_port.1);
-
-                if let Ok((mut incoming, addr)) = listener.accept().await {
-                    println!("Accept incoming from {addr:?}");
-                    if conn
-                        .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+                let port = cc.domain_port.1;
+                tokio::spawn(async move {
+                    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
                         .await
-                        .is_ok()
-                    {
-                        println!("copy bidirectional data: incoming, conn");
-                        let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                        .unwrap();
+                    println!("Listening to 127.0.0.1:{}", port);
+
+                    if let Ok((mut incoming, addr)) = listener.accept().await {
+                        println!("Accept incoming from {addr:?}");
+                        if conn
+                            .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+                            .await
+                            .is_ok()
+                        {
+                            println!("copy bidirectional data: incoming, conn");
+                            let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                        }
                     }
-                }
+                });
             }
         }
         _ => {
