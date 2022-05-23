@@ -28,7 +28,7 @@ async fn main() -> std::io::Result<()> {
             let state = state.clone();
             let domains = domain_to_port.clone();
             tokio::spawn(async move {
-                let _ = handle_connection(conn, domains, state).await;
+                let err = handle_connection(conn, domains, state).await;
             });
         }
     }
@@ -105,12 +105,22 @@ async fn handle_connection(
 }
 
 struct ControlChannel {
-    conn: TcpStream,
     domain_port: DomainPort,
 }
 
 impl ControlChannel {
-    pub fn new(conn: TcpStream, domain_port: DomainPort) -> Self {
-        ControlChannel { conn, domain_port }
+    pub fn new(mut conn: TcpStream, domain_port: DomainPort) -> Self {
+        tokio::spawn(async move {
+            loop {
+                let res = conn.read_exact(&mut [0u8; 1]).await;
+
+                if let Err(err) = res {
+                    println!("receive error: {}", err);
+                    break;
+                }
+            }
+        });
+
+        ControlChannel { domain_port }
     }
 }

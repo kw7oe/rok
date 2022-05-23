@@ -40,6 +40,16 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
 
     println!("control channel established!");
 
+    tokio::spawn(async move {
+        loop {
+            let res = cc.read_exact(&mut [0u8; 1]).await;
+            if let Err(err) = res {
+                println!("receive error: {}", err);
+                break;
+            }
+        }
+    });
+
     domain.ok_or_else(|| "no domain return".into())
 }
 

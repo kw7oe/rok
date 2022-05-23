@@ -1,6 +1,6 @@
 ## rok
 
-A minimal `ngrok` implementation in Rust.
+A minimal `ngrok` implementation in Rust, for educational purpose.
 
 _This is by no mean an idiomatic or correct Rust implementation. I am learning
 Rust and fairly new to writing networking code with `tokio`_.
