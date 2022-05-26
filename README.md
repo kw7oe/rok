@@ -7,6 +7,8 @@ Rust and fairly new to writing networking code with `tokio`_.
 
 ### Implementation and limitations
 
+_Last Updated: 24th May 2022_
+
 Currently, it's a half baked implementation. It basically:
 
 - Have a server to listen to incoming `Init` packet from a client and reply
@@ -36,6 +38,8 @@ On top of that:
 - It probably doesn't work well with websocket yet.
 
 ### Flow
+
+_Last Updated: 24th May 2022_
 
 The following flow will be the initial first attempt to make a minimal reverse
 proxy. It's subject to changes as we involved our implementation.
