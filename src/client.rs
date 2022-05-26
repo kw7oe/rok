@@ -6,9 +6,10 @@ mod packet;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    tracing_subscriber::fmt::init();
     let domain = init().await?;
     if let Err(e) = run_data_channel(domain).await {
-        println!("{:?}", e);
+        tracing::error!("{:?}", e);
     }
 
     Ok(())
@@ -23,7 +24,7 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
     cc.write_all(&bincode::serialize(&init).unwrap()).await?;
     let len = cc.read_buf(&mut buf).await?;
     let domain = if let packet::Packet::Success(domain) = packet::Packet::parse(&buf) {
-        println!("tunnel up!\nHost: {domain}");
+        tracing::info!("tunnel up!\nHost: {domain}");
         Some(domain)
     } else {
         None
@@ -38,13 +39,13 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
     cc.write_all(&bincode::serialize(&packet::Packet::Ack).unwrap())
         .await?;
 
-    println!("control channel established!");
+    tracing::trace!("control channel established!");
 
     tokio::spawn(async move {
         loop {
             let res = cc.read_exact(&mut [0u8; 1]).await;
             if let Err(err) = res {
-                println!("receive error: {}", err);
+                tracing::error!("receive error: {}", err);
                 break;
             }
         }
@@ -56,7 +57,7 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
 async fn run_data_channel(domain: String) -> std::io::Result<()> {
     loop {
         let mut conn = TcpStream::connect("rok.me:3001").await?;
-        println!("established data channel...");
+        tracing::trace!("established data channel...");
         conn.write_all(&bincode::serialize(&packet::Packet::DataInit(domain.clone())).unwrap())
             .await?;
 
@@ -66,10 +67,10 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
 
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
             let mut local = TcpStream::connect("127.0.0.1:4000").await?;
-            println!("copy bidirectional data: conn, local");
+            tracing::trace!("copy bidirectional data: conn, local");
             let _ = tokio::io::copy_bidirectional(&mut conn, &mut local).await?;
         } else {
-            println!("no packets receive");
+            tracing::trace!("no packets receive");
         }
     }
 }

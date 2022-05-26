@@ -66,12 +66,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "httparse"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "496ce29bb5a52785b44e0f7ca2847ae0bb839c9bd28f69acac9b99d461c0c04c"
-
-[[package]]
 name = "itoa"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -256,7 +250,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
- "httparse",
  "serde",
  "tokio",
  "tracing",

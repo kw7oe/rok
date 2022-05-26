@@ -21,10 +21,10 @@ async fn main() -> std::io::Result<()> {
     ]));
 
     let state: State = Arc::new(RwLock::new(HashMap::new()));
-    println!("Listening on TCP: 127.0.0.1:3001");
+    tracing::info!("Listening on TCP: 127.0.0.1:3001");
     loop {
         if let Ok((conn, _)) = listener.accept().await {
-            println!("Accpeting new client...");
+            tracing::info!("Accpeting new client...");
             let state = state.clone();
             let domains = domain_to_port.clone();
             tokio::spawn(async move {
@@ -50,7 +50,7 @@ async fn handle_connection(
             drop(domains_guard);
 
             if domain_port.is_none() {
-                println!("oops no more domain available, ignore you");
+                tracing::warn!("oops no more domain available, ignore you");
                 return Ok(());
             }
 
@@ -59,12 +59,12 @@ async fn handle_connection(
             let success = packet::Packet::Success(domain.clone());
             conn.write_all(&bincode::serialize(&success).unwrap())
                 .await?;
-            println!("sent success msg");
+            tracing::trace!("sent success msg");
 
             buffer.advance(bytes_len);
             conn.read_buf(&mut buffer).await?;
             if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
-                println!("receive ack from client");
+                tracing::trace!("receive ack from client");
                 let mut state = state.write().await;
                 let cc = ControlChannel::new(conn, domain_port, Arc::clone(&domains));
                 state.insert(domain, cc);
@@ -79,16 +79,16 @@ async fn handle_connection(
                     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
                         .await
                         .unwrap();
-                    println!("Listening to 127.0.0.1:{}", port);
+                    tracing::info!("Listening to 127.0.0.1:{}", port);
 
                     if let Ok((mut incoming, addr)) = listener.accept().await {
-                        println!("Accept incoming from {addr:?}");
+                        tracing::info!("Accept incoming from {addr:?}");
                         if conn
                             .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
                             .await
                             .is_ok()
                         {
-                            println!("copy bidirectional data: incoming, conn");
+                            tracing::trace!("copy bidirectional data: incoming, conn");
                             let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
                         }
                     }
@@ -122,7 +122,7 @@ impl ControlChannel {
                 let res = conn.read_exact(&mut [0u8; 1]).await;
 
                 if let Err(err) = res {
-                    println!("receive error: {}", err);
+                    tracing::error!("receive error: {}", err);
                     let mut domains_guard = domains.lock().await;
                     domains_guard.push(dp);
                     break;
