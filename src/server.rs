@@ -100,6 +100,7 @@ impl ControlChannel {
     ) -> Self {
         let (tx, mut rx): (_, mpsc::Receiver<TcpStream>) = mpsc::channel(32);
         let (visitor_tx, mut visitor_rx) = mpsc::channel(32);
+        let (close_tx, mut close_rx) = tokio::sync::oneshot::channel();
 
         // Push domain back to domain pools when a client connection is closed.
         // The client is expected to send a Heartbeat every 500 ms.
@@ -112,7 +113,11 @@ impl ControlChannel {
                 if let Err(err) = res {
                     tracing::error!("receive error: {err}");
                     let mut domains_guard = domains.lock().await;
-                    domains_guard.push(dp);
+                    let domain_port = dp.clone();
+                    domains_guard.push(domain_port);
+
+                    let port = dp.1;
+                    let _ = close_tx.send(port);
                     break;
                 }
             }
@@ -125,15 +130,22 @@ impl ControlChannel {
         // the specified domain.
         let port = domain_port.1;
         tokio::spawn(async move {
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
                 .await
                 .unwrap();
             tracing::info!("Listening to 127.0.0.1:{}", port);
 
             loop {
-                if let Ok((incoming, _addr)) = listener.accept().await {
-                    let _ = visitor_tx.send(incoming).await;
-                };
+                tokio::select! {
+                    Ok(port_recv) = &mut close_rx => {
+                        tracing::warn!("{port}: receive closed for port: {port_recv}");
+                        break;
+                    },
+                    Ok((incoming, _addr)) = listener.accept() => {
+                        let _ = visitor_tx.send(incoming).await;
+                    }
+
+                }
             }
         });
 
@@ -155,6 +167,7 @@ impl ControlChannel {
                             tracing::trace!("copy bidirectional data: incoming, conn");
                             let result =
                                 tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+
                             tracing::trace!("result: {result:?}");
                         }
                     }
