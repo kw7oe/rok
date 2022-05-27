@@ -35,8 +35,8 @@ On top of that:
 
 - It only support 3 domain name, that means it currently support at most 3
   client at a time.
-- The domain name is not recycle. This mean that if a client lost it's
-  connection, the domain assigned do not goes back to the domain name pool.
+- ~The domain name is not recycle. This mean that if a client lost it's
+  connection, the domain assigned do not goes back to the domain name pool.~
 - It probably doesn't work well with websocket yet.
 
 ### Flow

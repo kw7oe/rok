@@ -109,12 +109,8 @@ impl ControlChannel {
             loop {
                 let mut buf = vec![0u8; 1];
                 let res = conn.read_exact(&mut buf).await;
-                if let Ok(_size) = res {
-                    if buf == [1] {
-                        tracing::trace!("receive heartbeat from client: {buf:?}");
-                    }
-                } else {
-                    tracing::error!("receive error: {}", res.unwrap_err());
+                if let Err(err) = res {
+                    tracing::error!("receive error: {err}");
                     let mut domains_guard = domains.lock().await;
                     domains_guard.push(dp);
                     break;
