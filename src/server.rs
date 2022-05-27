@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 mod packet;
 
@@ -74,25 +74,7 @@ async fn handle_connection(
             let state = state.write().await;
 
             if let Some(cc) = state.get(&domain) {
-                let port = cc.domain_port.1;
-                tokio::spawn(async move {
-                    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-                        .await
-                        .unwrap();
-                    tracing::info!("Listening to 127.0.0.1:{}", port);
-
-                    if let Ok((mut incoming, addr)) = listener.accept().await {
-                        tracing::info!("Accept incoming from {addr:?}");
-                        if conn
-                            .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
-                            .await
-                            .is_ok()
-                        {
-                            tracing::trace!("copy bidirectional data: incoming, conn");
-                            let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
-                        }
-                    }
-                });
+                let _ = cc.data_tx.send(conn).await;
             }
         }
         _ => {
@@ -106,6 +88,7 @@ async fn handle_connection(
 
 struct ControlChannel {
     domain_port: DomainPort,
+    data_tx: mpsc::Sender<TcpStream>,
 }
 
 impl ControlChannel {
@@ -114,6 +97,8 @@ impl ControlChannel {
         domain_port: DomainPort,
         domains: Arc<Mutex<Vec<DomainPort>>>,
     ) -> Self {
+        let (tx, mut rx): (_, mpsc::Receiver<TcpStream>) = mpsc::channel(32);
+
         // Clone so we could move into tokio async
         let domains = Arc::clone(&domains);
         let dp = domain_port.clone();
@@ -130,6 +115,31 @@ impl ControlChannel {
             }
         });
 
-        ControlChannel { domain_port }
+        let port = domain_port.1;
+        tokio::spawn(async move {
+            while let Some(mut conn) = rx.recv().await {
+                let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+                    .await
+                    .unwrap();
+                tracing::info!("Listening to 127.0.0.1:{}", port);
+
+                if let Ok((mut incoming, addr)) = listener.accept().await {
+                    tracing::info!("Accept incoming from {addr:?}");
+                    if conn
+                        .write_all(&bincode::serialize(&packet::Packet::DataForward).unwrap())
+                        .await
+                        .is_ok()
+                    {
+                        tracing::trace!("copy bidirectional data: incoming, conn");
+                        let _ = tokio::io::copy_bidirectional(&mut incoming, &mut conn).await;
+                    }
+                }
+            }
+        });
+
+        ControlChannel {
+            domain_port,
+            data_tx: tx,
+        }
     }
 }
