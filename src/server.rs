@@ -89,23 +89,44 @@ async fn handle_connection(
 }
 
 struct ControlChannel {
-    domain_port: DomainPort,
     data_tx: mpsc::Sender<TcpStream>,
 }
 
 impl ControlChannel {
     pub fn new(
-        conn: TcpStream,
+        mut conn: TcpStream,
         domain_port: DomainPort,
         domains: Arc<Mutex<Vec<DomainPort>>>,
     ) -> Self {
         let (tx, mut rx): (_, mpsc::Receiver<TcpStream>) = mpsc::channel(32);
         let (visitor_tx, mut visitor_rx) = mpsc::channel(32);
 
-        // Clone so we could move into tokio async
-        // let domains = Arc::clone(&domains);
-        // let dp = domain_port.clone();
+        // Push domain back to domain pools when a client connection is closed.
+        // The client is expected to send a Heartbeat every 500 ms.
+        let domains = Arc::clone(&domains);
+        let dp = domain_port.clone();
+        tokio::spawn(async move {
+            loop {
+                let mut buf = vec![0u8; 1];
+                let res = conn.read_exact(&mut buf).await;
+                if let Ok(_size) = res {
+                    if buf == [1] {
+                        tracing::trace!("receive heartbeat from client: {buf:?}");
+                    }
+                } else {
+                    tracing::error!("receive error: {}", res.unwrap_err());
+                    let mut domains_guard = domains.lock().await;
+                    domains_guard.push(dp);
+                    break;
+                }
+            }
+        });
 
+        // Spawn a TCP socket to listen to the public internet traffic
+        // at the assigned port of the domain.
+        //
+        // Without this, our server can't be receiving any requests from
+        // the specified domain.
         let port = domain_port.1;
         tokio::spawn(async move {
             let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
@@ -120,6 +141,14 @@ impl ControlChannel {
             }
         });
 
+        // Listen for incoming requests that is forward to the visitor_rx channel
+        // by the TCP server above.
+        //
+        // If a request is received, listen to the data connection. There should
+        // always have at least one connection at the time being as our client code
+        // always create a Data Channel once the previous request is completed.
+        //
+        // If both are found, begin proxying request and response on both side.
         tokio::spawn(async move {
             loop {
                 if let Some(mut incoming) = visitor_rx.recv().await {
@@ -137,9 +166,6 @@ impl ControlChannel {
             }
         });
 
-        ControlChannel {
-            domain_port,
-            data_tx: tx,
-        }
+        ControlChannel { data_tx: tx }
     }
 }

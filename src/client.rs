@@ -1,5 +1,6 @@
 use bytes::Buf;
 use std::error::Error;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 mod packet;
@@ -40,6 +41,19 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
         .await?;
 
     tracing::trace!("control channel established!");
+
+    // Send heartbeat to server every 500 ms;
+    tokio::spawn(async move {
+        loop {
+            let res = cc.write_all(&[1u8; 1]).await;
+            if let Err(err) = res {
+                tracing::error!("control channel is closed by remote peer {}", err);
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
 
     domain.ok_or_else(|| "no domain return".into())
 }
