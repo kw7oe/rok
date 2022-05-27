@@ -1,6 +1,8 @@
 ## rok
 
 A minimal `ngrok` implementation in Rust, for educational purpose.
+This work is largely based on [rathole][0], especially [the very first commit][1].
+Other honorable references are stated below [here](#references).
 
 _This is by no mean an idiomatic or correct Rust implementation. I am learning
 Rust and fairly new to writing networking code with `tokio`_.
@@ -92,7 +94,9 @@ Internet <---------------> Server <---------------> Server
 ### References
 
 - [ngrok](https://github.com/inconshreveable/ngrok/blob/master/docs/DEVELOPMENT.md): To understand how to setup tunneling on a high level.
-- [rathole](https://github.com/rapiz1/rathole/commit/8f3bf5c7c7109821d737a6a67a7fd51fdf3b0917): The first commit of a lightweight Rust `ngrok` liked implementation. Use TCP all the way.
+- [rathole][0]: The first commit of a lightweight Rust `ngrok` liked implementation. Use TCP all the way.
 - [tunnelto](https://github.com/agrinman/tunnelto): Another Rust `ngrok` liked implementation. It use websockets to setup the control channel.
 - [tokio.rs](https://tokio.rs/tokio/tutorial): Tokio tutorials.
 
+[0]: https://github.com/rapiz1/rathole
+[1]: https://github.com/rapiz1/rathole/commit/8f3bf5c7c7109821d737a6a67a7fd51fdf3b0917
