@@ -41,16 +41,6 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
 
     tracing::trace!("control channel established!");
 
-    tokio::spawn(async move {
-        loop {
-            let res = cc.read_exact(&mut [0u8; 1]).await;
-            if let Err(err) = res {
-                tracing::error!("receive error: {}", err);
-                break;
-            }
-        }
-    });
-
     domain.ok_or_else(|| "no domain return".into())
 }
 
@@ -68,9 +58,7 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
             let mut local = TcpStream::connect("127.0.0.1:4000").await?;
             tracing::trace!("copy bidirectional data: conn, local");
-            let _ = tokio::io::copy_bidirectional(&mut conn, &mut local).await?;
-        } else {
-            tracing::trace!("no packets receive");
+            let _ = tokio::io::copy_bidirectional(&mut conn, &mut local).await;
         }
     }
 }
