@@ -9,7 +9,7 @@ Rust and fairly new to writing networking code with `tokio`_.
 
 ### Implementation and limitations
 
-_Last Updated: 24th May 2022_
+_Last Updated: 27th May 2022_
 
 Currently, it's a half baked implementation. It basically:
 
@@ -37,7 +37,8 @@ On top of that:
   client at a time.
 - ~The domain name is not recycle. This mean that if a client lost it's
   connection, the domain assigned do not goes back to the domain name pool.~
-- It probably doesn't work well with websocket yet.
+- It doesn't work with websocket yet.
+- It doesn't support logging HTTP request and response time.
 
 ### Flow
 
