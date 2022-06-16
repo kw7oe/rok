@@ -1,7 +1,11 @@
 use bytes::Buf;
 use std::error::Error;
+use std::io::{self, BufRead};
+use std::pin::Pin;
+use std::str;
+use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::net::TcpStream;
 mod packet;
 
@@ -69,10 +73,101 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
         let mut buf = vec![0u8; packet.len()];
         conn.read_exact(&mut buf).await?;
 
+        // Two implementations:
+        // 2 -- > reimplement copy_bidirectional with an event channel that backdoors
+        //          A --------> B           send(Event::AtoB).await.expect("channel closed!");
+        //          B --------> A           j
+
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
             let mut local = TcpStream::connect("127.0.0.1:4000").await?;
             tracing::trace!("copy bidirectional data: conn, local");
-            let _ = tokio::io::copy_bidirectional(&mut conn, &mut local).await;
+
+            let mut logger = ConnectionLogger::new(Box::pin(conn), Box::pin(local));
+
+            tokio::io::copy_bidirectional(&mut logger.dst, &mut logger.src).await;
+            // starting from here
         }
+    }
+}
+
+struct ConnectionLogger<'a, T: AsyncRead + AsyncWrite> {
+    src: Logger<'a, T>,
+    dst: Logger<'a, T>,
+    counter: usize,
+}
+
+struct Logger<'a, T: AsyncRead + AsyncWrite> {
+    // why do we need to box T? deref?
+    inner: Pin<Box<T>>,
+    manager: Option<&'a ConnectionLogger<'a, T>>,
+}
+
+impl<T: AsyncRead + AsyncWrite> ConnectionLogger<'_, T> {
+    fn new(dst: Pin<Box<T>>, src: Pin<Box<T>>) -> Self {
+        Self {
+            dst: Logger {
+                inner: dst,
+                manager: None,
+            },
+            src: Logger {
+                inner: src,
+                manager: None,
+            },
+            counter: 0,
+        }
+    }
+}
+
+/// "implement the AsyncRead trait for the Logger struct where T is bound to AsyncRead"
+impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<'_, T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>, // hint: that this method is supposed to be ran inside of a task buf: &mut ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let poll_result = self.inner.as_mut().poll_read(cx, buf);
+        if poll_result.is_ready() {
+            // do not log if the buffer is empty
+            if buf.capacity() != buf.remaining() {
+                let raw_http = str::from_utf8(buf.filled()).expect("failed to strify");
+                let chunks: Vec<&str> = raw_http.split('\n').collect();
+                if !chunks.is_empty() {
+                    println!("{}", chunks[0]);
+                    // println!("{}", self.packet_counter);
+                }
+            }
+        }
+        poll_result
+    }
+}
+
+impl<T: AsyncWrite + AsyncRead> AsyncWrite for Logger<'_, T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.as_mut().poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.as_mut().poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    #[inline]
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_shutdown(cx)
     }
 }
