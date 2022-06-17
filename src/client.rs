@@ -1,6 +1,7 @@
+use ansi_term::Colour;
 use bytes::Buf;
 use std::error::Error;
-use std::io::{self, BufRead};
+use std::io::{self};
 use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, Mutex};
@@ -135,12 +136,26 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
                     let chunks: Vec<&str> = raw_http.split('\n').collect();
                     if !chunks.is_empty() {
                         let log = chunks[0].replace("HTTP/1.1", "");
+                        let log = log.trim();
 
                         let mut state = self.state.lock().unwrap();
                         if let Some(instant) = state.timestamp.take() {
-                            println!("{} {:#?}", log.trim(), instant.elapsed());
+                            let (status_code, status) = log.split_once(' ').unwrap();
+
+                            let status_code: u32 = status_code.parse().unwrap();
+                            let color_status = match status_code {
+                                404 => Colour::Yellow.paint(log).to_string(),
+                                status_code if status_code >= 400 => {
+                                    Colour::Red.paint(log).to_string()
+                                }
+                                status_code if status_code >= 200 => {
+                                    Colour::Green.paint(log).to_string()
+                                }
+                                _ => status_code.to_string(),
+                            };
+                            println!("{:<#15?} {color_status}", instant.elapsed());
                         } else {
-                            print!("{} ", log.trim());
+                            print!("{:<20} ", log.trim());
                             state.timestamp = Some(Instant::now());
                         }
 
