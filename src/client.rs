@@ -95,14 +95,12 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
                 state: state.clone(),
             };
 
-            tokio::io::copy_bidirectional(&mut logger_src, &mut logger_dst).await;
-            // starting from here
+            let _ = tokio::io::copy_bidirectional(&mut logger_src, &mut logger_dst).await;
         }
     }
 }
 
 struct LoggerState {
-    counter: usize,
     timestamp: Option<Instant>,
 }
 
@@ -114,10 +112,7 @@ struct Logger<T: AsyncRead + AsyncWrite> {
 
 impl LoggerState {
     fn new() -> Self {
-        Self {
-            counter: 0,
-            timestamp: None,
-        }
+        Self { timestamp: None }
     }
 }
 
@@ -140,7 +135,7 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
 
                         let mut state = self.state.lock().unwrap();
                         if let Some(instant) = state.timestamp.take() {
-                            let (status_code, status) = log.split_once(' ').unwrap();
+                            let (status_code, _status) = log.split_once(' ').unwrap();
 
                             let status_code: u32 = status_code.parse().unwrap();
                             let color_status = match status_code {
