@@ -1,7 +1,13 @@
+use ansi_term::Colour;
 use bytes::Buf;
 use std::error::Error;
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt as _};
+use std::io;
+use std::pin::Pin;
+use std::str;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::net::TcpStream;
 mod packet;
 
@@ -69,10 +75,122 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
         let mut buf = vec![0u8; packet.len()];
         conn.read_exact(&mut buf).await?;
 
+        // Two implementations:
+        // 2 -- > reimplement copy_bidirectional with an event channel that backdoors
+        //          A --------> B           send(Event::AtoB).await.expect("channel closed!");
+        //          B --------> A           j
+
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
-            let mut local = TcpStream::connect("127.0.0.1:4000").await?;
+            let local = TcpStream::connect("127.0.0.1:4000").await?;
             tracing::trace!("copy bidirectional data: conn, local");
-            let _ = tokio::io::copy_bidirectional(&mut conn, &mut local).await;
+
+            let state = Arc::new(Mutex::new(LoggerState::new()));
+            let mut logger_src = Logger {
+                inner: Box::pin(conn),
+                state: state.clone(),
+            };
+
+            let mut logger_dst = Logger {
+                inner: Box::pin(local),
+                state: state.clone(),
+            };
+
+            let _ = tokio::io::copy_bidirectional(&mut logger_src, &mut logger_dst).await;
         }
+    }
+}
+
+struct LoggerState {
+    timestamp: Option<Instant>,
+}
+
+struct Logger<T: AsyncRead + AsyncWrite> {
+    // why do we need to box T? deref?
+    inner: Pin<Box<T>>,
+    state: Arc<Mutex<LoggerState>>,
+}
+
+impl LoggerState {
+    fn new() -> Self {
+        Self { timestamp: None }
+    }
+}
+
+/// "implement the AsyncRead trait for the Logger struct where T is bound to AsyncRead"
+impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>, // hint: that this method is supposed to be ran inside of a task buf: &mut ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let poll_result = self.inner.as_mut().poll_read(cx, buf);
+        if poll_result.is_ready() {
+            // do not log if the buffer is empty
+            if buf.capacity() != buf.remaining() {
+                if let Ok(raw_http) = str::from_utf8(buf.filled()) {
+                    let chunks: Vec<&str> = raw_http.split('\n').collect();
+                    if !chunks.is_empty() {
+                        let log = chunks[0].replace("HTTP/1.1", "");
+                        let log = log.trim();
+
+                        let mut state = self.state.lock().unwrap();
+                        if let Some(instant) = state.timestamp.take() {
+                            let (status_code, _status) = log.split_once(' ').unwrap();
+
+                            let status_code: u32 = status_code.parse().unwrap();
+                            let color_status = match status_code {
+                                404 => Colour::Yellow.paint(log).to_string(),
+                                status_code if status_code >= 400 => {
+                                    Colour::Red.paint(log).to_string()
+                                }
+                                status_code if status_code >= 200 => {
+                                    Colour::Green.paint(log).to_string()
+                                }
+                                _ => status_code.to_string(),
+                            };
+                            println!("{:<#15?} {color_status}", instant.elapsed());
+                        } else {
+                            print!("{:<20} ", log.trim());
+                            state.timestamp = Some(Instant::now());
+                        }
+
+                        // Unlock explicitly
+                        drop(state);
+                    }
+                }
+            }
+        }
+        poll_result
+    }
+}
+
+impl<T: AsyncWrite + AsyncRead> AsyncWrite for Logger<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.as_mut().poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.as_mut().poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    #[inline]
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.inner.as_mut().poll_shutdown(cx)
     }
 }
