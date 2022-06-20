@@ -1,7 +1,7 @@
 use ansi_term::Colour;
 use bytes::Buf;
 use std::error::Error;
-use std::io::{self};
+use std::io;
 use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, Mutex};
