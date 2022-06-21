@@ -81,7 +81,7 @@ async fn run_data_channel(domain: String) -> std::io::Result<()> {
         //          B --------> A           j
 
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
-            let local = TcpStream::connect("127.0.0.1:4000").await?;
+            let local = TcpStream::connect("0.0.0.0:4000").await?;
             tracing::trace!("copy bidirectional data: conn, local");
 
             let state = Arc::new(Mutex::new(LoggerState::new()));

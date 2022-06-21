@@ -13,7 +13,7 @@ type DomainPort = (String, u16);
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
-    let listener = TcpListener::bind("127.0.0.1:3001").await?;
+    let listener = TcpListener::bind("0.0.0.0:3001").await?;
     let domain_to_port = Arc::new(Mutex::new(vec![
         ("test.rok.me".to_string(), 3002),
         ("test2.rok.me".to_string(), 3003),
@@ -21,7 +21,7 @@ async fn main() -> std::io::Result<()> {
     ]));
 
     let state: State = Arc::new(RwLock::new(HashMap::new()));
-    tracing::info!("Listening on TCP: 127.0.0.1:3001");
+    tracing::info!("Listening on TCP: 0.0.0.0:3001");
     loop {
         if let Ok((conn, _)) = listener.accept().await {
             tracing::info!("Accpeting new client...");
@@ -130,10 +130,8 @@ impl ControlChannel {
         // the specified domain.
         let port = domain_port.1;
         tokio::spawn(async move {
-            let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
-                .await
-                .unwrap();
-            tracing::info!("Listening to 127.0.0.1:{}", port);
+            let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await.unwrap();
+            tracing::info!("Listening to 0.0.0.0:{}", port);
 
             loop {
                 tokio::select! {
