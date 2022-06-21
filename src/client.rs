@@ -11,19 +11,34 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt as _, ReadBuf
 use tokio::net::TcpStream;
 mod packet;
 
+use clap::Parser;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Config {
+    #[clap(short, long, value_parser, default_value = "rok.me")]
+    domain_name: String,
+    #[clap(short, long, value_parser, default_value_t = 3001)]
+    port: u32,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
-    let domain = init().await?;
-    if let Err(e) = run_data_channel(domain).await {
+    let config = Config::parse();
+    tracing::trace!("init client with {:?}", config);
+
+    let domain = init(&config).await?;
+    if let Err(e) = run_data_channel(&config, domain).await {
         tracing::error!("{:?}", e);
     }
 
     Ok(())
 }
 
-async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
-    let mut cc = TcpStream::connect("rok.me:3001").await?;
+async fn init(config: &Config) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let mut cc = TcpStream::connect(format!("{}:{}", config.domain_name, config.port)).await?;
     let mut buf = bytes::BytesMut::with_capacity(1024);
 
     // Send a Init
@@ -31,7 +46,7 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
     cc.write_all(&bincode::serialize(&init).unwrap()).await?;
     let len = cc.read_buf(&mut buf).await?;
     let domain = if let packet::Packet::Success(domain) = packet::Packet::parse(&buf) {
-        tracing::info!("tunnel up!\nHost: {domain}");
+        println!("tunnel up!\nHost: {domain}");
         Some(domain)
     } else {
         None
@@ -64,9 +79,10 @@ async fn init() -> Result<String, Box<dyn Error + Send + Sync>> {
     domain.ok_or_else(|| "no domain return".into())
 }
 
-async fn run_data_channel(domain: String) -> std::io::Result<()> {
+async fn run_data_channel(config: &Config, domain: String) -> std::io::Result<()> {
     loop {
-        let mut conn = TcpStream::connect("rok.me:3001").await?;
+        let mut conn =
+            TcpStream::connect(format!("{}:{}", config.domain_name, config.port)).await?;
         tracing::trace!("established data channel...");
         conn.write_all(&bincode::serialize(&packet::Packet::DataInit(domain.clone())).unwrap())
             .await?;
