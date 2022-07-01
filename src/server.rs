@@ -1,11 +1,22 @@
 use bytes::{Buf, BytesMut};
+use clap::Parser;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
-
 mod packet;
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Config {
+    #[clap(short, long, value_parser, default_value_t = 3001)]
+    port: u16,
+    #[clap(short, long, value_parser)]
+    domains: Vec<String>,
+}
+
+const DEFAULT_IP: &str = "0.0.0.0";
 
 type State = Arc<RwLock<HashMap<String, ControlChannel>>>;
 type DomainPort = (String, u16);
@@ -13,15 +24,32 @@ type DomainPort = (String, u16);
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
-    let listener = TcpListener::bind("0.0.0.0:3001").await?;
-    let domain_to_port = Arc::new(Mutex::new(vec![
-        ("test.rok.me".to_string(), 3002),
-        ("test2.rok.me".to_string(), 3003),
-        ("test3.rok.me".to_string(), 3004),
-    ]));
+
+    let config = Config::parse();
+    let address = format!("{DEFAULT_IP}:{}", config.port);
+
+    if config.domains.is_empty() {
+        panic!("domains is expected!");
+    }
+
+    tracing::trace!("init server with {:?}", config);
+
+    let mut port = config.port;
+    let domain_port_mapping: Vec<DomainPort> = config
+        .domains
+        .iter()
+        .map(|domain| {
+            port += 1;
+            (domain.to_string(), port)
+        })
+        .collect();
+
+    let listener = TcpListener::bind(&address).await?;
+    let domain_to_port = Arc::new(Mutex::new(domain_port_mapping));
+    tracing::trace!("domain mapping: {:?}", domain_to_port);
 
     let state: State = Arc::new(RwLock::new(HashMap::new()));
-    tracing::info!("Listening on TCP: 0.0.0.0:3001");
+    tracing::info!("Listening on TCP: {address}");
     loop {
         if let Ok((conn, _)) = listener.accept().await {
             tracing::info!("Accpeting new client...");
@@ -130,8 +158,10 @@ impl ControlChannel {
         // the specified domain.
         let port = domain_port.1;
         tokio::spawn(async move {
-            let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await.unwrap();
-            tracing::info!("Listening to 0.0.0.0:{}", port);
+            let listener = TcpListener::bind(format!("{DEFAULT_IP}:{port}"))
+                .await
+                .unwrap();
+            tracing::info!("Listening to {DEFAULT_IP}:{}", port);
 
             loop {
                 tokio::select! {

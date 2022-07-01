@@ -16,7 +16,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Config {
-    #[clap(short, long, value_parser, default_value = "rok.me")]
+    #[clap(short, long, value_parser)]
     domain_name: String,
     #[clap(short, long, value_parser, default_value_t = 3001)]
     port: u32,
