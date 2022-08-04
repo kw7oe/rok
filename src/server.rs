@@ -26,7 +26,6 @@ async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = Config::parse();
-    let address = format!("{DEFAULT_IP}:{}", config.port);
 
     if config.domains.is_empty() {
         panic!("domains is expected!");
@@ -44,12 +43,12 @@ async fn main() -> std::io::Result<()> {
         })
         .collect();
 
-    let listener = TcpListener::bind(&address).await?;
+    let listener = TcpListener::bind((DEFAULT_IP, port)).await?;
     let domain_to_port = Arc::new(Mutex::new(domain_port_mapping));
     tracing::trace!("domain mapping: {:?}", domain_to_port);
 
     let state: State = Arc::new(RwLock::new(HashMap::new()));
-    tracing::info!("Listening on TCP: {address}");
+    tracing::info!("Listening on TCP: {DEFAULT_IP}:{}", port);
     loop {
         if let Ok((conn, _)) = listener.accept().await {
             tracing::info!("Accpeting new client...");
@@ -158,9 +157,7 @@ impl ControlChannel {
         // the specified domain.
         let port = domain_port.1;
         tokio::spawn(async move {
-            let listener = TcpListener::bind(format!("{DEFAULT_IP}:{port}"))
-                .await
-                .unwrap();
+            let listener = TcpListener::bind((DEFAULT_IP, port)).await.unwrap();
             tracing::info!("Listening to {DEFAULT_IP}:{}", port);
 
             loop {
