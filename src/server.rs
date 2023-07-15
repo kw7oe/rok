@@ -43,12 +43,12 @@ async fn main() -> std::io::Result<()> {
         })
         .collect();
 
-    let listener = TcpListener::bind((DEFAULT_IP, port)).await?;
+    let listener = TcpListener::bind((DEFAULT_IP, config.port)).await?;
     let domain_to_port = Arc::new(Mutex::new(domain_port_mapping));
     tracing::trace!("domain mapping: {:?}", domain_to_port);
 
     let state: State = Arc::new(RwLock::new(HashMap::new()));
-    tracing::info!("Listening on TCP: {DEFAULT_IP}:{}", port);
+    tracing::info!("Listening on TCP: {DEFAULT_IP}:{}", config.port);
     loop {
         if let Ok((conn, _)) = listener.accept().await {
             tracing::info!("Accpeting new client...");
