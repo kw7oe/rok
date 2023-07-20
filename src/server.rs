@@ -6,6 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, RwLock};
 mod packet;
+mod router;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -42,6 +43,7 @@ async fn main() -> std::io::Result<()> {
             (domain.to_string(), port)
         })
         .collect();
+    let proxy_client = Arc::new(router::ProxyClient::new("http://127.0.0.1:8000"));
 
     let listener = TcpListener::bind((DEFAULT_IP, config.port)).await?;
     let domain_to_port = Arc::new(Mutex::new(domain_port_mapping));
@@ -54,8 +56,9 @@ async fn main() -> std::io::Result<()> {
             tracing::info!("Accpeting new client...");
             let state = state.clone();
             let domains = domain_to_port.clone();
+            let proxy_client = proxy_client.clone();
             tokio::spawn(async move {
-                if let Err(err) = handle_connection(conn, domains, state).await {
+                if let Err(err) = handle_connection(conn, domains, state, proxy_client).await {
                     tracing::error!("handle_connection: {err:?}");
                 }
             });
@@ -67,6 +70,7 @@ async fn handle_connection(
     mut conn: TcpStream,
     domains: Arc<Mutex<Vec<DomainPort>>>,
     state: State,
+    proxy_client: Arc<router::ProxyClient>,
 ) -> std::io::Result<()> {
     let mut buffer = BytesMut::with_capacity(4096);
 
@@ -74,16 +78,16 @@ async fn handle_connection(
     let packet = packet::Packet::parse(&buffer);
     match packet {
         packet::Packet::Init => {
-            let mut domains_guard = domains.lock().await;
-            let domain_port = domains_guard.pop();
-            drop(domains_guard);
+            let domain_port = {
+                let mut domains_guard = domains.lock().await;
+                domains_guard.pop()
+            };
 
-            if domain_port.is_none() {
+            let Some(domain_port) = domain_port else {
                 tracing::warn!("oops no more domain available, ignore you");
                 return Ok(());
-            }
+            };
 
-            let domain_port = domain_port.unwrap();
             let domain = domain_port.0.clone();
             let success = packet::Packet::Success(domain.clone());
             conn.write_all(&bincode::serialize(&success).unwrap())
@@ -94,9 +98,12 @@ async fn handle_connection(
             conn.read_buf(&mut buffer).await?;
             if let packet::Packet::Ack = packet::Packet::parse(&buffer) {
                 tracing::trace!("receive ack from client");
-                let mut state = state.write().await;
-                let cc = ControlChannel::new(conn, domain_port, Arc::clone(&domains));
-                state.insert(domain, cc);
+                {
+                    let mut state = state.write().await;
+                    let cc =
+                        ControlChannel::new(conn, domain_port, Arc::clone(&domains), proxy_client);
+                    state.insert(domain, cc);
+                }
             }
         }
         packet::Packet::DataInit(domain) => {
@@ -124,6 +131,7 @@ impl ControlChannel {
         mut conn: TcpStream,
         domain_port: DomainPort,
         domains: Arc<Mutex<Vec<DomainPort>>>,
+        proxy_client: Arc<router::ProxyClient>,
     ) -> Self {
         let (tx, mut rx): (_, mpsc::Receiver<TcpStream>) = mpsc::channel(32);
         let (visitor_tx, mut visitor_rx) = mpsc::channel(32);
@@ -159,6 +167,10 @@ impl ControlChannel {
         tokio::spawn(async move {
             let listener = TcpListener::bind((DEFAULT_IP, port)).await.unwrap();
             tracing::info!("Listening to {DEFAULT_IP}:{}", port);
+
+            proxy_client
+                .add_routes(&domain_port.0, &format!("{DEFAULT_IP}:{}", &domain_port.1))
+                .await;
 
             loop {
                 tokio::select! {

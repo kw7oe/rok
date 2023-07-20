@@ -45,7 +45,7 @@ async fn init(config: &Config) -> Result<String, Box<dyn Error + Send + Sync>> {
     cc.write_all(&bincode::serialize(&init).unwrap()).await?;
     let len = cc.read_buf(&mut buf).await?;
     let domain = if let packet::Packet::Success(domain) = packet::Packet::parse(&buf) {
-        println!("tunnel up!\nHost: {domain}");
+        tracing::info!("tunnel up!\nHost: {domain}");
         Some(domain)
     } else {
         None
