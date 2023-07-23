@@ -145,10 +145,27 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
         if poll_result.is_ready() {
             // do not log if the buffer is empty
             if buf.capacity() != buf.remaining() {
+                // TODO: I think we can further optimized this by just
+                // checking the first few bytes before constructing a str
+                // from the buffer.
+                //
+                // Since, we are only interested in the first line of a HTTP payload,
+                // we can just check if it's start with GET/POST/etc, HTTP/1.1 or HTTP/2
                 if let Ok(raw_http) = str::from_utf8(buf.filled()) {
-                    let chunks: Vec<&str> = raw_http.split('\n').collect();
-                    if !chunks.is_empty() && chunks[0].contains("HTTP/1.1") {
-                        let log = chunks[0].replace("HTTP/1.1", "");
+                    // NOTE: We are only interested in the very first line of the
+                    // HTTP payload, which give us the HTTP method, path and status
+                    // code.
+                    //
+                    // So, instead of collecting all of the splitted string
+                    // into Vec, we just lazily iterate to the next one instead.
+                    // In theory, this should reduce the memory usage since we
+                    // are only consuming one line.
+                    if let Some(line) = raw_http.split('\n').next() {
+                        if !line.contains("HTTP/1.1") {
+                            return poll_result;
+                        };
+
+                        let log = line.replace("HTTP/1.1", "");
                         let log = log.trim();
 
                         let mut state = self.state.lock().unwrap();
@@ -177,10 +194,43 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
                             print!("{:<20} ", log.trim());
                             state.timestamp = Some(Instant::now());
                         }
-
-                        // Unlock explicitly
-                        drop(state);
                     }
+
+                    // let chunks: Vec<&str> = raw_http.split('\n').collect();
+                    // if !chunks.is_empty() && chunks[0].contains("HTTP/1.1") {
+                    //     let log = chunks[0].replace("HTTP/1.1", "");
+                    //     let log = log.trim();
+                    //
+                    //     let mut state = self.state.lock().unwrap();
+                    //     if let Some(instant) = state.timestamp.take() {
+                    //         let Some((status_code, _status)) = log.split_once(' ') else {
+                    //             return poll_result;
+                    //         };
+                    //
+                    //         let Ok(status_code) = status_code.parse() else  {
+                    //             return poll_result;
+                    //         };
+                    //
+                    //         let color_status = match status_code {
+                    //             404 => Colour::Yellow.paint(log).to_string(),
+                    //             status_code if status_code >= 400 => {
+                    //                 Colour::Red.paint(log).to_string()
+                    //             }
+                    //             status_code if status_code >= 200 => {
+                    //                 Colour::Green.paint(log).to_string()
+                    //             }
+                    //             _ => status_code.to_string(),
+                    //         };
+                    //
+                    //         println!("{:<#15?} {color_status}", instant.elapsed());
+                    //     } else {
+                    //         print!("{:<20} ", log.trim());
+                    //         state.timestamp = Some(Instant::now());
+                    //     }
+                    //
+                    // Unlock explicitly
+                    // drop(state);
+                    // }
                 }
             }
         }
