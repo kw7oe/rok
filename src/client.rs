@@ -19,7 +19,9 @@ struct Config {
     #[clap(short, long, value_parser)]
     domain_name: String,
     #[clap(short, long, value_parser, default_value_t = 3001)]
-    port: u32,
+    server_port: u32,
+    #[clap(short, long, value_parser, default_value_t = 4000)]
+    target_port: u32,
 }
 
 #[tokio::main]
@@ -37,7 +39,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 async fn init(config: &Config) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let mut cc = TcpStream::connect(format!("{}:{}", config.domain_name, config.port)).await?;
+    let mut cc =
+        TcpStream::connect(format!("{}:{}", config.domain_name, config.server_port)).await?;
     let mut buf = bytes::BytesMut::with_capacity(1024);
 
     // Send a Init
@@ -81,7 +84,7 @@ async fn init(config: &Config) -> Result<String, Box<dyn Error + Send + Sync>> {
 async fn run_data_channel(config: &Config, domain: String) -> std::io::Result<()> {
     loop {
         let mut conn =
-            TcpStream::connect(format!("{}:{}", config.domain_name, config.port)).await?;
+            TcpStream::connect(format!("{}:{}", config.domain_name, config.server_port)).await?;
         tracing::trace!("established data channel...");
         conn.write_all(&bincode::serialize(&packet::Packet::DataInit(domain.clone())).unwrap())
             .await?;
@@ -96,7 +99,7 @@ async fn run_data_channel(config: &Config, domain: String) -> std::io::Result<()
         //          B --------> A           j
 
         if let packet::Packet::DataForward = packet::Packet::parse(&buf) {
-            let local = TcpStream::connect("0.0.0.0:4000").await?;
+            let local = TcpStream::connect(format!("0.0.0.0:{}", config.target_port)).await?;
             tracing::trace!("copy bidirectional data: conn, local");
 
             let state = Arc::new(Mutex::new(LoggerState::new()));
@@ -144,15 +147,20 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
             if buf.capacity() != buf.remaining() {
                 if let Ok(raw_http) = str::from_utf8(buf.filled()) {
                     let chunks: Vec<&str> = raw_http.split('\n').collect();
-                    if !chunks.is_empty() {
+                    if !chunks.is_empty() && chunks[0].contains("HTTP/1.1") {
                         let log = chunks[0].replace("HTTP/1.1", "");
                         let log = log.trim();
 
                         let mut state = self.state.lock().unwrap();
                         if let Some(instant) = state.timestamp.take() {
-                            let (status_code, _status) = log.split_once(' ').unwrap();
+                            let Some((status_code, _status)) = log.split_once(' ') else {
+                                return poll_result;
+                            };
 
-                            let status_code: u32 = status_code.parse().unwrap();
+                            let Ok(status_code) = status_code.parse() else  {
+                                return poll_result;
+                            };
+
                             let color_status = match status_code {
                                 404 => Colour::Yellow.paint(log).to_string(),
                                 status_code if status_code >= 400 => {
@@ -163,6 +171,7 @@ impl<T: AsyncRead + AsyncWrite> AsyncRead for Logger<T> {
                                 }
                                 _ => status_code.to_string(),
                             };
+
                             println!("{:<#15?} {color_status}", instant.elapsed());
                         } else {
                             print!("{:<20} ", log.trim());
